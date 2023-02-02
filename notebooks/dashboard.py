@@ -1,94 +1,93 @@
+import json
 import os
-from datetime import date
 
+import geopandas as gpd
 import numpy as np
 import pandas as pd
-from bokeh.io import show
-from bokeh.layouts import column, grid, gridplot, row
+from bokeh.layouts import column, row
 from bokeh.models import (
-    AutocompleteInput,
     BoxSelectTool,
-    CategoricalColorMapper,
     ColumnDataSource,
     CustomJS,
-    DataTable,
-    Div,
-    HoverTool,
-    IntEditor,
-    Legend,
     MultiChoice,
-    MultiSelect,
-    NumberEditor,
-    NumberFormatter,
     RangeSlider,
     Select,
-    SelectEditor,
-    StringEditor,
-    StringFormatter,
-    TableColumn,
-    TabPanel,
-    Tabs,
-    CrosshairTool, Slider,
+    CrosshairTool, Slider, LegendItem, Legend, HoverTool, Div, Spacer
 )
-from bokeh.palettes import Light8
-from bokeh.plotting import curdoc, figure, show
-import json
-from bokeh.io import output_file, output_notebook, show
 from bokeh.models import (
     ColorBar,
-    ContinuousColorMapper,
     GeoJSONDataSource,
     LinearColorMapper,
 )
-from bokeh.palettes import brewer
+from bokeh.palettes import Light8, Light, Sunset, Sunset11, Light9
+from bokeh.plotting import curdoc
 from bokeh.plotting import figure
-import geopandas as gpd
+
 
 def create_circle_plot(sources, x_default, y_default, palette):
     p = figure(
-        width=600,
-        height=500,
-        tools=["pan,wheel_zoom,box_select,reset", BoxSelectTool(dimensions="width")],
+        title="Circle Plot",
+        width=800,
+        height=450,
+        tools=["pan,wheel_zoom,reset,hover", BoxSelectTool(dimensions="width")],
         active_drag="pan",
     )
     p.xaxis.axis_label = x_default
     p.yaxis.axis_label = y_default
 
-    circle_plots = []
+    circle_plots = {}
+    legend_items = {}
     for i, country in enumerate(sources):
-        circle_plots.append(p.circle(
+        circle_plots[country] = p.circle(
             x="x1",
             y="y",
             source=sources[country],
-            legend_label=country,
+            # legend_label=country,
             fill_color=palette[i],
             size=10,
-        ))
-    return p, circle_plots
+        )
+        legend_items[country] = LegendItem(label=country, renderers=[circle_plots[country]])
+    legend = Legend(items=list(legend_items.values()))
+    p.add_layout(legend)
+
+    hover = p.select(dict(type=HoverTool))
+    hover.tooltips = [("Country", "@country"), ("Year", "@year"), ("X", "@x1"), ("Y", "@y")]
+    hover.mode = 'mouse'
+
+    return p, circle_plots, legend_items
 
 
 def create_line_plot(sources, x_default, y_default, palette, y_range):
     p = figure(
-        width=600,
-        height=500,
-        tools=["pan,wheel_zoom,box_select,reset", BoxSelectTool(dimensions="height")],
+        title="Line Plot",
+        width=800,
+        height=450,
+        tools=["pan,wheel_zoom,reset,hover",],
         active_drag="pan",
         y_range=y_range,
     )
     p.xaxis.axis_label = x_default
     p.yaxis.axis_label = y_default
 
-    line_plots = []
+    line_plots = {}
+    legend_items = {}
     for i, country in enumerate(sources):
-        line_plots.append(p.line(
+        line_plots[country] = p.line(
             x="x2",
             y="y",
             source=sources[country],
-            legend_label=country,
             line_color=palette[i],
             line_width=1,
-        ))
-    return p, line_plots
+        )
+        legend_items[country] = LegendItem(label=country, renderers=[line_plots[country]])
+    legend = Legend(items=list(legend_items.values()))
+    p.add_layout(legend)
+
+    hover = p.select(dict(type=HoverTool))
+    hover.tooltips = [("Country", "@country"), ("Year", "@year"), ("X", "@x2"), ("Y", "@y")]
+    hover.mode = 'mouse'
+
+    return p, line_plots, legend_items
 
 
 def add_vlinked_crosshairs(fig1, fig2):
@@ -116,17 +115,21 @@ def add_vlinked_crosshairs(fig1, fig2):
 #######################################
 def create_interactive_scatterplots(
         df,
-        x_default="co2_emissions_tonnes_per_person",
+        x1_default="co2_emissions_tonnes_per_person",
+        x2_default="year",
         y_default="average_annual_temp",
-        default_countries=[
+        default_countries=None,
+):
+    if default_countries is None:
+        default_countries = [
             "Austria",
             "Germany",
             "France",
             "Spain",
             "Netherlands",
             "Sweden",
-        ],
-):
+        ]
+
     initial_data = df[df["country"].isin(default_countries)].sort_values(by="year")
     # create data source
     initial_data_by_country = initial_data.groupby("country").agg(list)
@@ -134,20 +137,23 @@ def create_interactive_scatterplots(
     sources = {}
     for country in initial_data_by_country.index:
         sources[country] = ColumnDataSource({
-            "x1": initial_data_by_country.loc[country, x_default],
-            "x2": initial_data_by_country.loc[country, x_default],
-            "y": initial_data_by_country.loc[country, y_default]
+            "x1": initial_data_by_country.loc[country, x1_default],
+            "x2": initial_data_by_country.loc[country, x2_default],
+            "y": initial_data_by_country.loc[country, y_default],
+            "year": initial_data_by_country.loc[country, "year"],
+            "country": np.repeat(country, len(initial_data_by_country.loc[country, x1_default]))
         })
 
-
     # CREATE FIGURES
-    palette = Light8
-    p_circle_plot, circle_plots = create_circle_plot(sources, x_default, y_default, palette)
-    p_line_plot, line_plots = create_line_plot(sources, x_default, y_default, palette, y_range=p_circle_plot.y_range)
+    palette = Light9
+    p_circle_plot, circle_plots, circle_plot_legend = create_circle_plot(sources, x1_default, y_default, palette)
+    p_line_plot, line_plots, line_plot_legend = create_line_plot(sources, x2_default, y_default, palette,
+                                                                 y_range=p_circle_plot.y_range)
 
     # CREATE WIDGETS
     axis_options = sorted(list(df.columns.values))
     axis_options.remove("country")
+    axis_options.remove("iso_a3")
     # Shared Y-axis
     select_y_shared = Select(
         title="Shared y-axis:",
@@ -159,7 +165,7 @@ def create_interactive_scatterplots(
     # x-axis scatterplot 1
     select_x1 = Select(
         title="X-axis left:",
-        value=x_default,
+        value=x1_default,
         options=axis_options,
         sizing_mode="stretch_width",
         height_policy="min",
@@ -167,7 +173,7 @@ def create_interactive_scatterplots(
     # x-axis scatterplot 2
     select_x2 = Select(
         title="X-axis right:",
-        value=x_default,
+        value=x2_default,
         options=axis_options,
         sizing_mode="stretch_width",
         height_policy="min",
@@ -182,6 +188,7 @@ def create_interactive_scatterplots(
         title="Countries:",
         sizing_mode="stretch_width",
         height_policy="min",
+        styles={"color": "black"}
     )
     # add year selection
     date_range_slider = RangeSlider(
@@ -218,16 +225,12 @@ def create_interactive_scatterplots(
             data_by_country[country] = {
                 "x1": subset_by_country.loc[country, x1],
                 "x2": subset_by_country.loc[country, x2],
-                "y": subset_by_country.loc[country, y]
+                "y": subset_by_country.loc[country, y],
+                "year": subset_by_country.loc[country, "year"],
+                "country": np.repeat(country, len(subset_by_country.loc[country, x1]))
             }
 
         return data_by_country
-        # return {
-        #     "x": subset[x],
-        #     "y1": subset[y1],
-        #     "y2": subset[y2],
-        #     "color": subset["country"],
-        # }
 
     def callback_y_shared(attr, old, new):
         new_data = get_filtered_data(
@@ -241,6 +244,7 @@ def create_interactive_scatterplots(
             sources[country].data["y"] = new_data[country]["y"]
         # source.data["y"] = new_data["y"]
         p_circle_plot.yaxis.axis_label = new
+        p_line_plot.yaxis.axis_label = new
         # p2.xaxis.axis_label = new
 
     def callback_x1(attr, old, new):
@@ -253,7 +257,6 @@ def create_interactive_scatterplots(
         )
         for country in sources:
             sources[country].data["x1"] = new_data[country]["x1"]
-        # source.data["x1"] = new_data["x1"]
         p_circle_plot.xaxis.axis_label = new
 
     def callback_x2(attr, old, new):
@@ -266,7 +269,6 @@ def create_interactive_scatterplots(
         )
         for country in sources:
             sources[country].data["x2"] = new_data[country]["x2"]
-        # source.data["x2"] = new_data["x2"]
         p_line_plot.xaxis.axis_label = new
 
     def callback_country(attr, old, new):
@@ -277,11 +279,47 @@ def create_interactive_scatterplots(
             countries=new,
             date_range=date_range_slider.value,
         )
-        for country in new: #sources
+
+        # delete removed countries
+        for country in set(sources.keys()).difference(new):
+            print(f"delete {country}")
+            p_circle_plot.renderers.remove(circle_plots[country])
+            p_circle_plot.legend.items.remove(circle_plot_legend[country])
+            p_line_plot.renderers.remove(line_plots[country])
+            p_line_plot.legend.items.remove(line_plot_legend[country])
+
+            del sources[country]
+            del circle_plots[country]
+            del circle_plot_legend[country]
+            del line_plots[country]
+            del line_plot_legend[country]
+
+        for country in new:
             if country in sources:
                 sources[country].data = new_data[country]
             else:
                 sources[country] = ColumnDataSource(new_data[country])
+
+                circle_plots[country] = p_circle_plot.circle(
+                    x="x1",
+                    y="y",
+                    source=sources[country],
+                    # legend_label=country,
+                    fill_color=palette[len(sources)],
+                    size=10,
+                )
+                circle_plot_legend[country] = LegendItem(label=country, renderers=[circle_plots[country]])
+                p_circle_plot.legend.items = list(circle_plot_legend.values())
+
+                line_plots[country] = p_line_plot.line(
+                    x="x2",
+                    y="y",
+                    source=sources[country],
+                    line_color=palette[len(sources)],
+                    line_width=1,
+                )
+                line_plot_legend[country] = LegendItem(label=country, renderers=[line_plots[country]])
+                p_line_plot.legend.items = list(line_plot_legend.values())
 
     def callback_date(attr, old, new):
         new_data = get_filtered_data(
@@ -300,8 +338,6 @@ def create_interactive_scatterplots(
     select_x2.on_change("value", callback_x2)
     choice_country.on_change("value", callback_country)
     date_range_slider.on_change("value", callback_date)
-
-    from functools import partial
 
     def callback(attr, old, new, country):
         for country in sources:
@@ -324,28 +360,25 @@ def create_interactive_scatterplots(
                 pass
 
     shared_widgets = column(
-        choice_country, date_range_slider, select_y_shared, select_x1, select_x2
+        date_range_slider, select_y_shared, select_x1, select_x2, choice_country
     )
     return shared_widgets, p_circle_plot, p_line_plot
 
 
 def create_map_histogram(df, default_var="average_annual_temp", default_year=2015):
-
     def get_filtered_data(variable=default_var, year=default_year):
         # filter according to year
         subset = df[df["year"] == year]
 
         # make data for map
-        subset_map = subset[[variable, "iso_a3"]]
-        # take df value that there is no change in mapping for different years
-        map_low_high = (df[variable].min(), df[variable].max())
+        subset_map = subset[[variable, "country", "iso_a3"]]
+        subset_map = subset_map.dropna()
+        map_low_high = (subset_map[variable].min(), subset_map[variable].max())
         subset_map = subset_map.rename(columns={variable: "map_variable"})
         world = gpd.read_file(gpd.datasets.get_path("naturalearth_lowres"))
-        # merged = world.merge(subset[[variable, "iso_a3"]], on="iso_a3")
         merged = world.merge(subset_map, on="iso_a3")
         merged_json = json.loads(merged.to_json())
         json_map = json.dumps(merged_json)
-        # json_map = GeoJSONDataSource(geojson=json_data)
 
         # make data for histogram
         hist, hist_edges = np.histogram(subset[variable], bins="auto")
@@ -372,11 +405,23 @@ def create_map_histogram(df, default_var="average_annual_temp", default_year=201
     p_map = create_choropleth_map(source_map, color_mapper)
     p_hist = create_histogram(source_histogram)
 
+    p_hist.xaxis.axis_label = default_var
+
+    axis_options = sorted(list(df.columns.values))
+    axis_options.remove("cc_somw_t_per")
+    axis_options.remove("cc_vser_somw_t_per")
+    axis_options.remove("cc_vser_t_per")
+    axis_options.remove("country")
+    axis_options.remove("gdp_per_capita_yearly_growth")
+    axis_options.remove("inflation_annual_percent")
+    axis_options.remove("iso_a3")
+    axis_options.remove("year")
+
     # add variable selection
     select_variable = Select(
         title="Variable:",
         value=default_var,
-        options=sorted(list(df.columns.values)),
+        options=axis_options,
         sizing_mode="stretch_width",
         height_policy="min",
     )
@@ -401,6 +446,7 @@ def create_map_histogram(df, default_var="average_annual_temp", default_year=201
         color_mapper.high = new_map_low_high[1]
         # update hist
         source_histogram.data = new_data_histogram
+        p_hist.xaxis.axis_label = new
 
     def callback_date(attr, old, new):
         new_data_map, _, new_data_histogram = get_filtered_data(select_variable.value, new)
@@ -411,7 +457,7 @@ def create_map_histogram(df, default_var="average_annual_temp", default_year=201
     select_variable.on_change("value", callback_variable)
     date_slider.on_change("value", callback_date)
 
-    shared_widgets = column(select_variable, date_slider)
+    shared_widgets = column(date_slider, select_variable)
     return shared_widgets, p_map, p_hist
 
 
@@ -420,9 +466,10 @@ def create_histogram(source):
 
     # CREATE FIGURE
     p = figure(
-        width=600,
-        height=500,
-        tools=["pan,wheel_zoom,box_select,reset", BoxSelectTool(dimensions="width")],
+        title="Histogram",
+        width=800,
+        height=450,
+        tools=["pan,wheel_zoom,box_select,reset,hover", BoxSelectTool(dimensions="width")],
         active_drag="pan",
     )
 
@@ -432,12 +479,17 @@ def create_histogram(source):
         top="hist",
         left="left",
         right="right",
-        fill_color="red",
+        fill_color="#2596be",
         line_color="black",
         source=source,
     )
 
+    hover = p.select(dict(type=HoverTool))
+    hover.tooltips = [("Value", "@hist"), ("Left", "@left"), ("Right", "@right")]
+    hover.mode = 'mouse'
+
     return p
+
 
 def create_choropleth_map(source, color_mapper):
     # Create color bar.
@@ -453,11 +505,18 @@ def create_choropleth_map(source, color_mapper):
 
     # Create figure object.
     p = figure(
-        title="Share of adults who are obese, 2016",
-        height=500,
-        width=600,
-        toolbar_location=None,
+        title="Choropleth Map",
+        height=450,
+        width=800,
+        tools=["pan,wheel_zoom,reset,hover"]
     )
+
+    p.xaxis.major_tick_line_color = None  # turn off x-axis major ticks
+    p.xaxis.minor_tick_line_color = None  # turn off x-axis minor ticks
+    p.yaxis.major_tick_line_color = None  # turn off y-axis major ticks
+    p.yaxis.minor_tick_line_color = None  # turn off y-axis minor ticks
+    p.xaxis.major_label_text_font_size = '0pt'  # preferred method for removing tick labels
+    p.yaxis.major_label_text_font_size = '0pt'  # preferred method for removing tick labels
 
     # Add patch renderer to figure.
     p.patches(
@@ -468,9 +527,14 @@ def create_choropleth_map(source, color_mapper):
         line_color="black",
         line_width=0.25,
         fill_alpha=1,
+
     )
     # Specify figure layout.
     p.add_layout(color_bar, "below")
+
+    hover = p.select(dict(type=HoverTool))
+    hover.tooltips = [("Country", "@country"), ("Value", "@map_variable")]
+    hover.mode = 'mouse'
 
     return p
 
@@ -492,9 +556,18 @@ widgets_scatter_line, circle_plot, line_plot = create_interactive_scatterplots(d
 
 # SETUP LAYOUT
 l = row(
-    column(widgets_map_histogram, widgets_scatter_line, sizing_mode="fixed", height=800, width=200),
-    column(cho_map, circle_plot, sizing_mode="stretch_height"),
+    column(Div(text="""<h2>Inputs</h2><h3>Map/Histogram:</h3>""", ),
+           widgets_map_histogram,
+           Div(text="""<br><br><hr style="width: 250px;"><br><br>""", ),
+           Div(text="""<h3>Circle/Line:</h3>""", ),
+           widgets_scatter_line, sizing_mode="fixed", width=250,
+           styles={"height": "100%", "background-color": "#181c1c", "padding": "20px", "color": "white"}),
+    column(cho_map, circle_plot, sizing_mode="stretch_both"),
     column(histogram, line_plot, sizing_mode="stretch_both"),
-    sizing_mode="stretch_both")
+    sizing_mode="stretch_both", styles={"background-color": "#181c1c"})
 
-curdoc().add_root(l)
+curdoc().theme = 'dark_minimal'
+curdoc().add_root(
+    Div(text="""<h1>Climate Dashboard</h1>""",
+        styles={"width": "100%", "background-color": "#2596be", "padding": "10px", "margin": "0", "color": "white"}))
+curdoc().add_root(l, )
